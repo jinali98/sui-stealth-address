@@ -46,11 +46,21 @@ function toPrivateKey(seed: Uint8Array): Uint8Array {
 
 app.get("/new-wallet-address", async (_req: Request, res: Response) => {
   try {
-    const keypair = new Ed25519Keypair();
-    const address = keypair.getPublicKey().toSuiAddress();
+    // receiver side
+    const privateKeyReceiver =
+      "suiprivkey1qzjl0ws9lrjqanx5yzd4vq44g649kknawatjegtv5k4gwfggesx92qmle4u";
+    const walletAddressReceiver =
+      "0x20c513f3e1848a7db6567e280f7964ade32a669ddc9d5a322320478bda0adcde";
+    // const keypair = new Ed25519Keypair();
+    // const publicKey = keypair.getPublicKey();
+    // const secretKey = keypair.getSecretKey();
+    // const address = keypair.getPublicKey().toSuiAddress();
     const message = new TextEncoder().encode(
       "please generate a stealth meta address for this wallet address"
     );
+
+    const keypair = Ed25519Keypair.fromSecretKey(privateKeyReceiver);
+
     const { signature } = await keypair.signPersonalMessage(message);
 
     const raw = fromB64(signature);
@@ -74,6 +84,7 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
     const viewPublicAddress = viewPublicKey.toSuiAddress();
     const spendPublicAddress = spendPublicKey.toSuiAddress();
 
+    // sender side
     const empKeyPair = new Secp256k1Keypair();
     const empPublicKey = empKeyPair.getPublicKey();
     const empPublicAddress = empPublicKey.toSuiAddress();
@@ -85,6 +96,12 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
       empPrivBytes,
       viewPublicKey.toRawBytes()
     );
+
+    const hashedSharedSecretViewPubKeyEmpPrivKey = keccak_256(
+      sharedSecretViewPubKeyEmpPrivKey.slice(1)
+    );
+
+    // receiver side
     const sharedSecretEmpPubKeyViewPrivKey = getSharedSecret(
       viewPriv,
       empPublicKey.toRawBytes()
@@ -92,10 +109,6 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
 
     const hashedSharedSecretEmpPubKeyViewPrivKey = keccak_256(
       sharedSecretEmpPubKeyViewPrivKey.slice(1)
-    );
-
-    const hashedSharedSecretViewPubKeyEmpPrivKey = keccak_256(
-      sharedSecretViewPubKeyEmpPrivKey.slice(1)
     );
 
     const hashScalarBytes = toPrivateKey(
@@ -113,21 +126,26 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
     //Create a keypair from the stealth private key
     const stealthKeypair = Secp256k1Keypair.fromSecretKey(stealthPrivBytes);
     const stealthAddress = stealthKeypair.getPublicKey().toSuiAddress();
+    const stealthPrivateKey = stealthKeypair.getSecretKey();
 
     res.status(200).json({
       status: "success",
       data: {
-        // publicKey: keypair.getPublicKey(),
-        privateKey: keypair.getSecretKey(),
-        address,
-        signature,
-        viewPublicAddress,
-        spendPublicAddress,
-        // sharedSecretViewPubKeyEmpPrivKey,
-        // sharedSecretEmpPubKeyViewPrivKey,
-        // hashedSharedSecretEmpPubKeyViewPrivKey,
-        // hashedSharedSecretViewPubKeyEmpPrivKey,
-        stealthAddress,
+        receiverWalletData: {
+          walletAddressReceiver,
+          privateKeyReceiver,
+          signature,
+        },
+        receiverStealthMetaAddress: {
+          viewPublicKey,
+          spendPublicKey,
+          viewPublicAddress,
+          spendPublicAddress,
+        },
+        stealthAddress: {
+          stealthAddress,
+          stealthPrivateKey,
+        },
       },
     });
   } catch (error) {
