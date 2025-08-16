@@ -3,16 +3,19 @@ import express from "express";
 import morgan from "morgan";
 import { Request, Response, NextFunction } from "express";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { Secp256k1Keypair } from "@mysten/sui/keypairs/secp256k1";
+import {
+  Secp256k1Keypair,
+  Secp256k1PublicKey,
+} from "@mysten/sui/keypairs/secp256k1";
+import { secp256k1 as curve } from "@noble/curves/secp256k1";
 
 import { fromB64 } from "@mysten/bcs";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { CURVE, etc, getSharedSecret } from "@noble/secp256k1";
 const { bytesToHex, hexToBytes, mod, hashToPrivateKey } = etc;
-import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
+import { decodeSuiPrivateKey, PublicKey } from "@mysten/sui/cryptography";
 
 import * as secp from "@noble/secp256k1";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/dist/cjs/client";
 
 const app = express();
 
@@ -42,7 +45,159 @@ function toPrivateKey(seed: Uint8Array): Uint8Array {
   return hexToBytes(hex);
 }
 
-// const client = new SuiClient({ url: getFullnodeUrl("testnet") });
+function generateKeyPair() {
+  const keypair = new Ed25519Keypair();
+  const publicKey = keypair.getPublicKey();
+  const secretKey = keypair.getSecretKey();
+  const address = keypair.getPublicKey().toSuiAddress();
+  return { keypair, publicKey, secretKey, address };
+}
+
+function generateEmpKeyPair() {
+  const empKeyPair = new Secp256k1Keypair();
+  const empPublicKey = empKeyPair.getPublicKey();
+  const empPublicAddress = empPublicKey.toSuiAddress();
+
+  return { empKeyPair, empPublicKey, empPublicAddress };
+}
+
+async function generateSignMessage(privateKey: string, text: string) {
+  const message = new TextEncoder().encode(text);
+  const keypair = Ed25519Keypair.fromSecretKey(privateKey);
+
+  const { signature } = await keypair.signPersonalMessage(message);
+
+  return signature;
+}
+
+const generateRandS = async (
+  signature: string
+): Promise<{
+  rPart: Uint8Array;
+  sPart: Uint8Array;
+}> => {
+  const raw = fromB64(signature);
+  const sig = raw.slice(1, 1 + 64);
+  const rPart = sig.slice(0, 32);
+  const sPart = sig.slice(32, 64);
+
+  return { rPart, sPart };
+};
+
+const generateStealthMetaAddress = async (
+  rPart: Uint8Array,
+  sPart: Uint8Array
+) => {
+  const viewKeySeed = keccak_256(rPart);
+  const spendKeySeed = keccak_256(sPart);
+
+  const viewPriv = toPrivateKey(viewKeySeed);
+  const spendPriv = toPrivateKey(spendKeySeed);
+
+  const secpAddressView = Secp256k1Keypair.fromSecretKey(viewPriv);
+  const secpAddressSpend = Secp256k1Keypair.fromSecretKey(spendPriv);
+
+  const viewPublicKey = secpAddressView.getPublicKey();
+  const spendPublicKey = secpAddressSpend.getPublicKey();
+
+  const viewPublicAddress = viewPublicKey.toSuiAddress();
+  const spendPublicAddress = spendPublicKey.toSuiAddress();
+
+  return {
+    viewPublicAddress,
+    spendPublicAddress,
+    viewPublicKey,
+    spendPublicKey,
+  };
+};
+
+const generateViewPriv = async (signature: string): Promise<Uint8Array> => {
+  const { rPart } = await generateRandS(signature);
+  const viewKeySeed = keccak_256(rPart);
+  const viewPriv = toPrivateKey(viewKeySeed);
+  return viewPriv;
+};
+
+const generateSpendPriv = async (signature: string): Promise<Uint8Array> => {
+  const { sPart } = await generateRandS(signature);
+  const spendKeySeed = keccak_256(sPart);
+  const spendPriv = toPrivateKey(spendKeySeed);
+  return spendPriv;
+};
+
+const generatePrivateKeyBitsfromKeyPair = async (
+  empKeyPair: Secp256k1Keypair
+) => {
+  const empPrivateKey = empKeyPair.getSecretKey();
+  const { secretKey: empPrivBytes } = decodeSuiPrivateKey(empPrivateKey);
+  return empPrivBytes;
+};
+
+const senderGenerateSharedSecret = async (
+  privKeyBytes: Uint8Array,
+  publicKey: PublicKey
+) => {
+  const sharedSecretViewPubKeyEmpPrivKey = getSharedSecret(
+    privKeyBytes,
+    publicKey.toRawBytes()
+  );
+
+  const hashedSharedSecretViewPubKeyEmpPrivKey = keccak_256(
+    sharedSecretViewPubKeyEmpPrivKey.slice(1)
+  );
+
+  return hashedSharedSecretViewPubKeyEmpPrivKey;
+};
+
+const generateStealthKeyPair = async (
+  hashedSharedSecret: Uint8Array,
+  publicKey: PublicKey
+) => {
+  const hashScalarBytes = toPrivateKey(hashedSharedSecret);
+  const hashScalar = BigInt("0x" + bytesToHex(hashScalarBytes));
+  const spendScalar = BigInt("0x" + bytesToHex(publicKey.toRawBytes()));
+
+  const stealthScalar = mod(spendScalar + hashScalar, CURVE.n);
+
+  const stealthPrivBytes = hexToBytes(
+    stealthScalar.toString(16).padStart(64, "0")
+  );
+
+  //Create a keypair from the stealth private key
+  const stealthKeypair = Secp256k1Keypair.fromSecretKey(stealthPrivBytes);
+
+  return stealthKeypair;
+};
+
+function toScalar32(hash32: Uint8Array): bigint {
+  let x = BigInt("0x" + bytesToHex(hash32));
+  x = mod(x, CURVE.n);
+  if (x === 0n) x = 1n;
+  return x;
+}
+
+function senderComputeStealthPublicKey(
+  spendPub: Secp256k1PublicKey,
+  hashedShared: Uint8Array
+): Secp256k1PublicKey {
+  const h = toScalar32(hashedShared);
+  const H = curve.ProjectivePoint.BASE.multiply(h); // h·G
+  const Pspend = curve.ProjectivePoint.fromHex(spendPub.toRawBytes());
+  const Pstealth = Pspend.add(H);
+  const stealthPubBytes = Pstealth.toRawBytes(true); // 33B compressed
+  return new Secp256k1PublicKey(stealthPubBytes);
+}
+
+function receiverComputeStealthKeypair(
+  spendPriv: Uint8Array,
+  hashedShared: Uint8Array
+): Secp256k1Keypair {
+  const h = toScalar32(hashedShared);
+  const s = BigInt("0x" + bytesToHex(spendPriv));
+  const k = mod(s + h, CURVE.n);
+  const kBytes = hexToBytes(k.toString(16).padStart(64, "0"));
+  return Secp256k1Keypair.fromSecretKey(kBytes);
+}
 
 app.get("/new-wallet-address", async (_req: Request, res: Response) => {
   try {
@@ -51,82 +206,56 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
       "suiprivkey1qzjl0ws9lrjqanx5yzd4vq44g649kknawatjegtv5k4gwfggesx92qmle4u";
     const walletAddressReceiver =
       "0x20c513f3e1848a7db6567e280f7964ade32a669ddc9d5a322320478bda0adcde";
-    // const keypair = new Ed25519Keypair();
-    // const publicKey = keypair.getPublicKey();
-    // const secretKey = keypair.getSecretKey();
-    // const address = keypair.getPublicKey().toSuiAddress();
-    const message = new TextEncoder().encode(
-      "please generate a stealth meta address for this wallet address"
-    );
 
-    const keypair = Ed25519Keypair.fromSecretKey(privateKeyReceiver);
+    const message =
+      "please generate a stealth meta address for this wallet address";
 
-    const { signature } = await keypair.signPersonalMessage(message);
+    const signature = await generateSignMessage(privateKeyReceiver, message);
 
-    const raw = fromB64(signature);
-    const flag = raw[0];
-    const sig = raw.slice(1, 1 + 64);
-    const rPart = sig.slice(0, 32);
-    const sPart = sig.slice(32, 64);
+    const { rPart, sPart } = await generateRandS(signature);
 
-    const viewKeySeed = keccak_256(rPart);
-    const spendKeySeed = keccak_256(sPart);
-
-    const viewPriv = toPrivateKey(viewKeySeed);
-    const spendPriv = toPrivateKey(spendKeySeed);
-
-    const secpAddressView = Secp256k1Keypair.fromSecretKey(viewPriv);
-    const secpAddressSpend = Secp256k1Keypair.fromSecretKey(spendPriv);
-
-    const viewPublicKey = secpAddressView.getPublicKey();
-    const spendPublicKey = secpAddressSpend.getPublicKey();
-
-    const viewPublicAddress = viewPublicKey.toSuiAddress();
-    const spendPublicAddress = spendPublicKey.toSuiAddress();
+    const {
+      viewPublicAddress,
+      spendPublicAddress,
+      viewPublicKey,
+      spendPublicKey,
+    } = await generateStealthMetaAddress(rPart, sPart);
 
     // sender side
-    const empKeyPair = new Secp256k1Keypair();
-    const empPublicKey = empKeyPair.getPublicKey();
-    const empPublicAddress = empPublicKey.toSuiAddress();
 
-    const empPrivateKey = empKeyPair.getSecretKey();
-    const { secretKey: empPrivBytes } = decodeSuiPrivateKey(empPrivateKey);
+    const { empKeyPair, empPublicKey } = generateEmpKeyPair();
 
-    const sharedSecretViewPubKeyEmpPrivKey = getSharedSecret(
-      empPrivBytes,
-      viewPublicKey.toRawBytes()
+    const empPrivBytes = await generatePrivateKeyBitsfromKeyPair(empKeyPair);
+
+    const hashedSharedSecretViewPubKeyEmpPrivKey =
+      await senderGenerateSharedSecret(empPrivBytes, viewPublicKey);
+
+    const stealthPublicKeySenderGenerated = senderComputeStealthPublicKey(
+      spendPublicKey as Secp256k1PublicKey,
+      hashedSharedSecretViewPubKeyEmpPrivKey
     );
 
-    const hashedSharedSecretViewPubKeyEmpPrivKey = keccak_256(
-      sharedSecretViewPubKeyEmpPrivKey.slice(1)
-    );
+    const stealthAddressSenderGenerated =
+      stealthPublicKeySenderGenerated.toSuiAddress();
 
     // receiver side
-    const sharedSecretEmpPubKeyViewPrivKey = getSharedSecret(
-      viewPriv,
-      empPublicKey.toRawBytes()
-    );
+    const viewPriv = await generateViewPriv(signature);
+    const spendPriv = await generateSpendPriv(signature);
 
-    const hashedSharedSecretEmpPubKeyViewPrivKey = keccak_256(
-      sharedSecretEmpPubKeyViewPrivKey.slice(1)
-    );
+    const hashedSharedSecretEmpPubKeyViewPrivKey =
+      await senderGenerateSharedSecret(viewPriv, empPublicKey);
 
-    const hashScalarBytes = toPrivateKey(
+    const stealthKeypairReceiverGenerated = await receiverComputeStealthKeypair(
+      spendPriv,
       hashedSharedSecretEmpPubKeyViewPrivKey
     );
-    const hashScalar = BigInt("0x" + bytesToHex(hashScalarBytes));
-    const spendScalar = BigInt("0x" + bytesToHex(spendPublicKey.toRawBytes()));
 
-    const stealthScalar = mod(spendScalar + hashScalar, CURVE.n);
+    const stealthAddressReceiverGenerated = stealthKeypairReceiverGenerated
+      .getPublicKey()
+      .toSuiAddress();
 
-    const stealthPrivBytes = hexToBytes(
-      stealthScalar.toString(16).padStart(64, "0")
-    );
-
-    //Create a keypair from the stealth private key
-    const stealthKeypair = Secp256k1Keypair.fromSecretKey(stealthPrivBytes);
-    const stealthAddress = stealthKeypair.getPublicKey().toSuiAddress();
-    const stealthPrivateKey = stealthKeypair.getSecretKey();
+    const stealthPrivateKeyReceiverGenerated =
+      stealthKeypairReceiverGenerated.getSecretKey();
 
     res.status(200).json({
       status: "success",
@@ -136,15 +265,20 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
           privateKeyReceiver,
           signature,
         },
-        receiverStealthMetaAddress: {
+        stealthMetaAddress: {
           viewPublicKey,
           spendPublicKey,
           viewPublicAddress,
           spendPublicAddress,
         },
-        stealthAddress: {
-          stealthAddress,
-          stealthPrivateKey,
+        stealthAddressReceiverGenerated: {
+          stealthAddress: stealthAddressReceiverGenerated,
+          stealthPrivateKey: stealthPrivateKeyReceiverGenerated,
+        },
+        announcement: {
+          stealthAddress: stealthAddressSenderGenerated,
+          empPublicKey,
+          hashedSharedSecretViewPubKeyEmpPrivKey,
         },
       },
     });
