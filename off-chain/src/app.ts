@@ -1,5 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
 import express from "express";
-// import cors from "cors";
 import morgan from "morgan";
 import { Request, Response, NextFunction } from "express";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
@@ -12,10 +13,10 @@ import { secp256k1 as curve } from "@noble/curves/secp256k1";
 import { fromB64 } from "@mysten/bcs";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { CURVE, etc, getSharedSecret } from "@noble/secp256k1";
-const { bytesToHex, hexToBytes, mod, hashToPrivateKey } = etc;
+const { bytesToHex, hexToBytes, mod } = etc;
 import { decodeSuiPrivateKey, PublicKey } from "@mysten/sui/cryptography";
 
-import * as secp from "@noble/secp256k1";
+import stealthRoute from "./routes/stealth.route";
 
 const app = express();
 
@@ -289,6 +290,8 @@ app.get("/new-wallet-address", async (_req: Request, res: Response) => {
     });
   }
 });
+
+app.use("/stealth", stealthRoute);
 
 // Handle all routes that are not defined
 app.all("*", (req: Request, _res: Response, next: NextFunction) => {
