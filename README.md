@@ -2,6 +2,8 @@
 
 > Non-interactive, private transactions on the Sui blockchain using EIP-5564 adapted for Move.
 
+#### For a visual walkthrough of the design, [see this stealth address diagram](https://drive.google.com/file/d/1H1KkGXIOezteeqRXuo0NTXjqlv-UskPT/view?usp=sharing). Last updated on 4 April 2026 and may be updated as the protocol changes
+
 ---
 
 ## Table of Contents
@@ -48,6 +50,8 @@ Stealth addresses solve this by making each incoming payment arrive at a brand-n
 ---
 
 ## System Architecture
+
+- [The Stealth Address Design Diagram](https://drive.google.com/file/d/1H1KkGXIOezteeqRXuo0NTXjqlv-UskPT/view?usp=sharing)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
