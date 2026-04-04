@@ -8,7 +8,7 @@ description = "Stealth Address SDK for Sui (EIP-5564 adapted)"
 # "ecdh" enables Diffie-Hellman, "arithmetic" enables point add/multiply
 k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 sha3 = "0.11.0"
-rand = "0.10.0"
+rand = "0.8.5"
 hex = "0.4"
 # Blake2b hash — needed for Sui address derivation (Blake2b-256)
 blake2 = "0.10"
