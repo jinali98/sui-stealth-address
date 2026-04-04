@@ -1,0 +1,46 @@
+# --- Rust (Cargo) ---
+**/target/
+**/*.rs.bk
+**/*.pdb
+
+# --- Sui Move ---
+**/build/
+
+# --- Node / npm / pnpm / yarn ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# --- Build & tooling output ---
+dist/
+out/
+coverage/
+*.tsbuildinfo
+.eslintcache
+.parcel-cache/
+.turbo/
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Editors & IDEs ---
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Logs ---
+logs/
+*.log
+
+# --- Misc ---
+.cache/
