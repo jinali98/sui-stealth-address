@@ -185,3 +185,115 @@ pub fn compute_stealth_private_key(
         sui_address,
     })
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::{derive_keys_from_signature, derive_stealth_meta_address};
+
+    #[test]
+    fn test_full_stealth_flow() {
+        // === Receiver Setup ===
+        
+        // Simulate a 64-byte signature (in real app, from wallet signing)
+        let mut fake_sig = vec![0u8; 64];
+        for i in 0..32 {
+            fake_sig[i] = (i as u8).wrapping_mul(7).wrapping_add(13);
+            fake_sig[32 + i] = (i as u8).wrapping_mul(11).wrapping_add(37);
+        }
+
+        // Derive keys from signature (r → view key, s → spend key)
+        let receiver_keys = derive_keys_from_signature(&fake_sig).unwrap();
+        
+        // Generate public meta address (this gets published)
+        let meta_address = derive_stealth_meta_address(&receiver_keys).unwrap();
+
+        println!("=== RECEIVER SETUP ===");
+        println!("View address:  {}", meta_address.view_public_address);
+        println!("Spend address: {}", meta_address.spend_public_address);
+
+        // === Sender Generates Stealth Address ===
+        
+        let payload = generate_stealth_address(&meta_address).unwrap();
+        
+        println!("\n=== SENDER GENERATES ===");
+        println!("Stealth address: {}", payload.stealth_address);
+        println!("View tag: 0x{:02x}", payload.view_tag);
+
+        // === Announcement ===
+        
+        let announcement = create_announcement(&payload, 1);
+
+        // === Receiver Scans ===
+        
+        let check_result = check_stealth_address(
+            &announcement,
+            &receiver_keys.view_priv_key,
+            &meta_address.spend_pub_key,
+        ).unwrap();
+
+        // Should find the announcement
+        assert!(check_result.is_some(), "Receiver should find their announcement!");
+        
+        let hashed_shared = check_result.unwrap();
+
+        println!("\n=== RECEIVER SCANS ===");
+        println!("Found announcement: YES");
+
+        // === Receiver Derives Spending Key ===
+        
+        let stealth_keypair = compute_stealth_private_key(
+            &receiver_keys.spend_priv_key,
+            &hashed_shared,
+        ).unwrap();
+
+        println!("\n=== RECEIVER DERIVES KEY ===");
+        println!("Stealth address: {}", stealth_keypair.sui_address);
+
+        // === Critical Test ===
+        
+        assert_eq!(
+            payload.stealth_address,
+            stealth_keypair.sui_address,
+            "Sender and receiver must compute the SAME stealth address!"
+        );
+
+        println!("\n✅ SUCCESS: Addresses match!");
+        println!("   Sender:   {}", payload.stealth_address);
+        println!("   Receiver: {}", stealth_keypair.sui_address);
+    }
+
+    #[test]
+    fn test_wrong_receiver_rejected() {
+        // Setup correct receiver
+        let mut sig = vec![0u8; 64];
+        sig[0] = 0x42;
+        sig[32] = 0x84;
+        let keys = derive_keys_from_signature(&sig).unwrap();
+        let meta = derive_stealth_meta_address(&keys).unwrap();
+
+        // Sender generates for correct receiver
+        let payload = generate_stealth_address(&meta).unwrap();
+        let announcement = create_announcement(&payload, 1);
+
+        // WRONG receiver tries to claim it
+        let mut wrong_sig = vec![0u8; 64];
+        wrong_sig[0] = 0xFF;
+        wrong_sig[32] = 0xEE;
+        let wrong_keys = derive_keys_from_signature(&wrong_sig).unwrap();
+        let wrong_meta = derive_stealth_meta_address(&wrong_keys).unwrap();
+
+        let result = check_stealth_address(
+            &announcement,
+            &wrong_keys.view_priv_key,
+            &wrong_meta.spend_pub_key,
+        ).unwrap();
+
+        // Wrong receiver should not find the announcement
+        assert!(result.is_none(), "Wrong receiver should not match!");
+
+        println!("✅ Wrong receiver correctly rejected");
+    }
+}
