@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Sui Stealth SDK Test</title>
+  </head>
+  <body>
+    <h1>Sui Stealth SDK : WASM Test</h1>
+    <pre id="output">Loading...</pre>
+
+    <script type="module">
+      import init, {
+        signMessage,
+        deriveKeysFromSignature,
+        deriveStealthMetaAddress,
+        generateStealthAddress,
+        checkStealthAddress,
+        computeStealthPrivateKey,
+      } from "./sui-stealth-sdk/pkg/sui_stealth_sdk.js";
+
+      async function run() {
+        // Initialize WASM
+        await init();
+
+        const output = document.getElementById("output");
+        let result = "";
+
+        try {
+          // Test data : this is hardcoded only for testing purposes
+          const privateKey =
+            "suiprivkey1qzjl0ws9lrjqanx5yzd4vq44g649kknawatjegtv5k4gwfggesx92qmle4u";
+          const message =
+            "please generate a stealth meta address for this wallet address";
+
+          // Sign message
+          result += "=== STEP 1: Sign Message ===\n";
+          const signature = signMessage(privateKey, message);
+          result += `Signature: ${signature.slice(0, 32)}...\n\n`;
+
+          // Derive keys (parse JSON string)
+          result += "=== STEP 2: Derive Keys ===\n";
+          const keys = JSON.parse(deriveKeysFromSignature(signature));
+          result += `View Private Key: ${keys.viewPrivateKey.slice(0, 32)}...\n`;
+          result += `Spend Private Key: ${keys.spendPrivateKey.slice(0, 32)}...\n\n`;
+
+          // Get meta-address (parse JSON string)
+          result += "=== STEP 3: Meta-Address ===\n";
+          const meta = JSON.parse(
+            deriveStealthMetaAddress(keys.viewPrivateKey, keys.spendPrivateKey),
+          );
+          result += `View Sui Address: ${meta.viewSuiAddress}\n`;
+          result += `Spend Sui Address: ${meta.spendSuiAddress}\n\n`;
+
+          // Generate stealth address (sender side)
+          result += "=== STEP 4: Generate Stealth Address ===\n";
+          const payload = JSON.parse(
+            generateStealthAddress(meta.viewPublicKey, meta.spendPublicKey),
+          );
+          result += `Stealth Address: ${payload.stealthAddress}\n`;
+          result += `View Tag: 0x${payload.viewTag.toString(16)}\n\n`;
+
+          // Check announcement (receiver side)
+          result += "=== STEP 5: Check Announcement ===\n";
+          const checkResult = JSON.parse(
+            checkStealthAddress(
+              payload.stealthAddress,
+              payload.ephemeralPublicKey,
+              payload.viewTag,
+              keys.viewPrivateKey,
+              meta.spendPublicKey,
+            ),
+          );
+          result += `Is Match: ${checkResult.isMatch}\n\n`;
+
+          // Derive spending key
+          if (checkResult.isMatch) {
+            result += "=== STEP 6: Derive Spending Key ===\n";
+            const stealthKey = JSON.parse(
+              computeStealthPrivateKey(
+                keys.spendPrivateKey,
+                checkResult.hashedSharedSecret,
+              ),
+            );
+            result += `Stealth Address: ${stealthKey.suiAddress}\n`;
+            result += `Private Key (Sui): ${stealthKey.privateKeySui}\n\n`;
+
+            // Verify match
+            result += "=== VERIFICATION ===\n";
+            if (payload.stealthAddress === stealthKey.suiAddress) {
+              result += "✅ SUCCESS! Addresses match!\n";
+            } else {
+              result += "❌ MISMATCH!\n";
+              result += `Sender:   ${payload.stealthAddress}\n`;
+              result += `Receiver: ${stealthKey.suiAddress}\n`;
+            }
+          }
+        } catch (e) {
+          result += `ERROR: ${e}\n`;
+          console.error(e);
+        }
+
+        output.textContent = result;
+      }
+
+      run();
+    </script>
+  </body>
+</html>

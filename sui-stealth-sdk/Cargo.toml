@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "Stealth Address SDK for Sui (EIP-5564 adapted)"
 
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+
 [dependencies]
 # "ecdh" enables Diffie-Hellman, "arithmetic" enables point add/multiply
 k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
@@ -20,6 +25,16 @@ serde_json = "1.0"
 
 bech32 = "0.11"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+
+# WASM support
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+console_error_panic_hook = "0.1"
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 
 [[example]]
 name = "example_demo"
