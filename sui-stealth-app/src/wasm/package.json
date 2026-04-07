@@ -1,0 +1,16 @@
+{
+  "name": "sui-stealth-sdk",
+  "type": "module",
+  "description": "Stealth Address SDK for Sui (EIP-5564 adapted)",
+  "version": "0.1.0",
+  "files": [
+    "sui_stealth_sdk_bg.wasm",
+    "sui_stealth_sdk.js",
+    "sui_stealth_sdk.d.ts"
+  ],
+  "main": "sui_stealth_sdk.js",
+  "types": "sui_stealth_sdk.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
